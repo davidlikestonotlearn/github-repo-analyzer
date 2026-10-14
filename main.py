@@ -1,67 +1,134 @@
+
+"""Analyze a GitHub user's public repositories using the GitHub REST API."""
+
+from collections import Counter
 import requests
 
-username = input("Get a user: ")
+BASE_URL = "https://api.github.com"
+PER_PAGE = 100
+
 
 def get_repositories(username):
-    # Fetch repositories from GitHub
-    page = 1
+    """Return all public repositories, or None if a request fails."""
     all_repos = []
+    page = 1
 
-    while True:
-        url = f"https://api.github.com/users/{username}/repos?per_page=100&page={page}"
+    with requests.Session() as session:
+        session.headers.update({"Accept": "application/vnd.github+json"})
 
-        response = requests.get(url, timeout=10)
+        while True:
+            try:
+                response = session.get(
+                    f"{BASE_URL}/users/{username}/repos",
+                    params={"per_page": PER_PAGE, "page": page},
+                    timeout=10,
+                )
+            except requests.exceptions.RequestException as error:
+                print(f"Request failed: {error}")
+                return None
 
-        if response.status_code == 404:
-            print("User does not exist")
-            return None
-        elif response.status_code != 200:
-            print(f"API ERROR: {response.status_code}")
-            return None
+            if response.status_code == 404:
+                print("User does not exist.")
+                return None
 
-        repos = response.json()
+            if response.status_code != 200:
+                print(f"GitHub API error: {response.status_code}")
+                return None
 
-        if len(repos) == 0:
-            break
+            try:
+                repos = response.json()
+            except ValueError:
+                print("GitHub returned invalid JSON.")
+                return None
 
-        all_repos.extend(repos)
-        page += 1
+            if not isinstance(repos, list):
+                print("Unexpected response from GitHub.")
+                return None
+
+            if not repos:
+                break
+
+            all_repos.extend(repos)
+
+            if len(repos) < PER_PAGE:
+                break
+
+            page += 1
 
     return all_repos
 
 
 def find_popular_repo(repos):
-    # Find the repository with the most stars
-    maxStars = -1
-    popularRepo = None
-    
-    for repo in repos:
-        stars = repo["stargazers_count"]
-    
-        if stars > maxStars:
-            maxStars = stars
-            popularRepo = repo["name"]
-    
-    if popularRepo is not None:
-        print(f"\nMost popular repository: {popularRepo}")
-        print(f"Stars: {maxStars}")
-    else:
-        print("No repositories found")
-    
+    """Return the repository with the most stars."""
+    return max(
+        repos,
+        key=lambda repo: repo["stargazers_count"],
+        default=None
+    )
+
 
 def rank_repositories(repos):
-    # Sort repositories by stars
-    sorted_repos = sorted(
-            repos,
-            key=lambda repo: repo["stargazers_count"],
-            reverse=True
-        )
-    
-    print("\nRepositories ranked by stars:")
-    
-    for index, repo in enumerate(sorted_repos, start=1):
-        print(f"{index}. {repo['name']} - {repo['stargazers_count']} stars")
+    """Sort repositories from most stars to least stars."""
+    return sorted(
+        repos,
+        key=lambda repo: repo["stargazers_count"],
+        reverse=True
+    )
 
-repos = get_repositories(username)
-find_popular_repo(repos)
-rank_repositories(repos)
+
+def count_languages(repos):
+    """Count repositories by their primary programming language."""
+    return Counter(
+        repo["language"]
+        for repo in repos
+        if repo.get("language")
+    )
+
+
+def main():
+    username = input("Enter GitHub username: ").strip()
+
+    if not username:
+        print("Please enter a username.")
+        return
+
+    repos = get_repositories(username)
+
+    if repos is None:
+        return
+
+    print(f"\nTotal public repositories fetched: {len(repos)}")
+
+    if not repos:
+        print("No public repositories found.")
+        return
+
+    most_popular = find_popular_repo(repos)
+
+    print(f"\nMost starred repository: {most_popular['name']}")
+    print(f"Stars: {most_popular['stargazers_count']}")
+
+    print("\nRepositories ranked by stars:")
+
+    for index, repo in enumerate(rank_repositories(repos), start=1):
+        language = repo.get("language") or "Unknown"
+        print(
+            f"{index}. {repo['name']} — "
+            f"{repo['stargazers_count']} stars ({language})"
+        )
+
+    languages = count_languages(repos)
+
+    print("\nPrimary languages by repository count:")
+
+    if not languages:
+        print("No primary languages detected.")
+    else:
+        for language, count in languages.most_common():
+            print(f"{language}: {count} repositories")
+
+        print(f"\nMost common language: {languages.most_common(1)[0][0]}")
+
+
+if __name__ == "__main__":
+    main()
